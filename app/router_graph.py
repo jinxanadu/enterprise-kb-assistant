@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from typing import TypedDict, Any
 from langgraph.graph import StateGraph, START, END
 from app.rag.qa_graph import build_qa_graph
@@ -24,8 +25,9 @@ class RouterState(TypedDict, total=False):  # 顶层状态结构，total=False�
 
 def decide_route(state: RouterState) -> str:
     mode = (state.get("mode") or "").lower().strip()
-
     active = (state.get("active_route") or "").lower().strip()
+
+    # 如果当前已在 leave 流程中，且没有显式切换回 QA，则继续走 leave
     if active == "leave" and mode not in {"qa", "rag", "kb"}:
         return "leave"
 
@@ -35,9 +37,25 @@ def decide_route(state: RouterState) -> str:
     if mode in {"leave", "hr"}:
         return "leave"
 
-    # 关键词路由
+    # 提取文本
     text = (state.get("text") or state.get("question") or "").lower()
-    if any(k in text for k in ["请假", "年假", "病假", "事假", "休假", "调休", "假期", "请一天假", "请半天假"]):
+
+    # === 新增：检查是否包含请假单 ID（LV- 开头）===
+    if re.search(r"\blv-[0-9a-f]{6,12}\b", text):
+        return "leave"
+
+    # === 扩展关键词：覆盖申请 + 审批场景 ===
+    leave_keywords = {
+        # 用户申请类
+        "请假", "年假", "病假", "事假", "调休", "休假", "假期",
+        "请一天假", "请半天假", "休几天", "我想请",
+        # HR 审批/操作类
+        "审批", "批准", "通过", "同意", "驳回", "拒绝", "不通过",
+        "撤销", "取消", "作废", "查", "查询", "状态", "进度",
+        "请假单", "请假记录", "我的假", "历史请假"
+    }
+
+    if any(kw in text for kw in leave_keywords):
         return "leave"
 
     return "qa"
